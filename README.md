@@ -127,11 +127,5 @@ energybae-interview-project/
 
 Please keep the `.env` file out of commits and respect the existing coding style (type hints, docstrings, and Pydantic models).
 
----
-
-## 📄 License
-This project is provided **as‑is** for educational purposes. Feel free to adapt it for personal or commercial use, but do not claim ownership of the underlying Gemini model or any third‑party libraries.
-
----
 
 **Enjoy building solar‑sized solutions!**
