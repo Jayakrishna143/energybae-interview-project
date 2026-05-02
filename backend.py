@@ -13,12 +13,11 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from langgraph.graph import END, StateGraph
+from langgraph.graph import END, StateGraph,START
 from openpyxl import Workbook
 from PIL import Image
 from pydantic import BaseModel, Field
 
-# ── Config ────────────────────────────────────────────────────────────────────
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env", override=True)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
@@ -27,7 +26,6 @@ PANEL_KW = 0.6  # each panel is 600 W = 0.6 kW
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-# ── Pydantic models ───────────────────────────────────────────────────────────
 
 class BillData(BaseModel):
     customer_name: str = ""
@@ -47,7 +45,6 @@ class ProcessResponse(BaseModel):
     bills: List[BillData]
     errors: List[str] = []
 
-# ── LangGraph state ───────────────────────────────────────────────────────────
 
 class State(TypedDict):
     base64_images: List[str]
@@ -55,7 +52,6 @@ class State(TypedDict):
     errors: List[str]
     excel_path: str
 
-# ── Node 1: Extract bills with Gemini Vision ──────────────────────────────────
 
 PROMPT = """Extract fields from this MSEDCL electricity bill image.
 Return ONLY valid JSON with exactly these keys:
@@ -101,7 +97,6 @@ def extract_node(state: State) -> State:
 
     return {**state, "extracted_bills": bills, "errors": errors}
 
-# ── Node 2: Write Excel ───────────────────────────────────────────────────────
 
 def excel_node(state: State) -> State:
     bills = state["extracted_bills"]
@@ -109,36 +104,11 @@ def excel_node(state: State) -> State:
     ws = wb.active
     ws.title = "Bill Analysis"
 
-    # Single sheet layout (mirrors reference format):
-    #
-    #   METER 1
-    #   Customer Name     : ...
-    #   Consumer No       : ...
-    #   Tariff Category   : ...
-    #   Sanctioned Load   : ... kW
-    #   <blank>
-    #   Month | Units Consumed | Bill Amount (Rs.)
-    #   2024-01 | 320 | ...
-    #   ...
-    #   <blank>
-    #   Avg Monthly Units        : X
-    #   Required Solar kW        : X
-    #   No. of Panels (600W)     : X
-    #   <blank><blank>
-    #   METER 2  ... (same block repeated)
-    #   ...
-    #   SOLAR SIZING SUMMARY
-    #   Meter | Consumer No | Avg Units/Month | Required kW | Panels
-    #   Meter 1 | ...
-    #   Meter 2 | ...
-    #   <blank>
-    #   TOTAL HOUSEHOLD COMBINED | | | total_kw | total_panels
 
-    sizing_results = []  # (meter_label, consumer_no, avg, kw, panels)
+    sizing_results = []  
 
     for i, bill in enumerate(bills, start=1):
 
-        # ── Meter header block ────────────────────────────────────────────────
         ws.append([f"METER {i}"])
         ws.append(["Customer Name",         bill.customer_name])
         ws.append(["Consumer No",           bill.consumer_number])
@@ -146,7 +116,6 @@ def excel_node(state: State) -> State:
         ws.append(["Sanctioned Load (kW)",  bill.sanctioned_load_kw])
         ws.append([])
 
-        # ── Monthly consumption table ─────────────────────────────────────────
         ws.append(["Month", "Units Consumed", "Bill Amount (Rs.)"])
 
         months = dict(bill.historical_consumption)
@@ -159,15 +128,14 @@ def excel_node(state: State) -> State:
 
         ws.append([])
 
-        # ── Per-meter solar sizing ────────────────────────────────────────────
         all_units = list(bill.historical_consumption.values())
         if bill.units_consumed:
             all_units.append(bill.units_consumed)
 
         if all_units:
             avg    = round(sum(all_units) / len(all_units), 1)
-            kw     = round((avg * 12 * 1.1) / 1400, 2)   # Load formula
-            panels = math.ceil(kw / PANEL_KW)              # ceil(kW / 0.6)
+            kw     = round((avg * 12 * 1.1) / 1400, 2)  
+            panels = math.ceil(kw / PANEL_KW)            
         else:
             avg, kw, panels = 0, 0, 0
 
@@ -175,11 +143,11 @@ def excel_node(state: State) -> State:
         ws.append(["Required Solar Capacity (kW)", kw])
         ws.append(["No. of Panels (600W each)",   panels])
         ws.append([])
-        ws.append([])   # extra spacer before next meter block
+        ws.append([])   
 
         sizing_results.append((f"Meter {i}", bill.consumer_number, avg, kw, panels))
 
-    # ── Combined Solar Sizing Summary ─────────────────────────────────────────
+
     ws.append(["SOLAR SIZING SUMMARY"])
     ws.append(["Meter", "Consumer No", "Avg Units/Month", "Required kW", "Panels (600W)"])
 
@@ -198,12 +166,12 @@ def excel_node(state: State) -> State:
     print(f"[Excel] Saved → {EXCEL_PATH}")
     return {**state, "excel_path": str(EXCEL_PATH)}
 
-# ── Build LangGraph ───────────────────────────────────────────────────────────
+
 
 builder = StateGraph(State)
 builder.add_node("extract", extract_node)
 builder.add_node("excel", excel_node)
-builder.set_entry_point("extract")
+builder.add_edge (START,"extract")
 builder.add_edge("extract", "excel")
 builder.add_edge("excel", END)
 graph = builder.compile()
